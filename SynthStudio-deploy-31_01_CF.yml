@@ -1,0 +1,1226 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  clientname:
+    Type: String
+  Route53HostedZoneID:
+    Type: String
+  DNSRecord:
+    Type: String
+  SSLCertificateARN:
+    Type: String
+  ArtifactsS3Bucket:
+    Type: String
+  InstanceTypeTrain:
+    Description: EC2 instance type
+    Type: String
+    Default: g4dn.xlarge
+    AllowedValues:
+      [
+        t2.micro,
+        t2.small,
+        t2.medium,
+        t2.large,
+        m3.medium,
+        m3.large,
+        m3.xlarge,
+        m3.2xlarge,
+        m4.large,
+        m4.xlarge,
+        m4.2xlarge,
+        m4.4xlarge,
+        m4.10xlarge,
+        c4.large,
+        c4.xlarge,
+        c4.2xlarge,
+        c4.4xlarge,
+        c4.8xlarge,
+        c3.large,
+        c3.xlarge,
+        c3.2xlarge,
+        c3.4xlarge,
+        c3.8xlarge,
+        r3.large,
+        r3.xlarge,
+        r3.2xlarge,
+        r3.4xlarge,
+        r3.8xlarge,
+        i2.xlarge,
+        i2.2xlarge,
+        i2.4xlarge,
+        i2.8xlarge,
+        g4dn.xlarge,
+        g4dn.2xlarge,
+      ]
+    ConstraintDescription: Please choose a valid instance type.
+  InstanceTypeInference:
+    Description: EC2 instance type
+    Type: String
+    Default: g4dn.xlarge
+    AllowedValues:
+      [
+        t2.micro,
+        t2.small,
+        t2.medium,
+        t2.large,
+        m3.medium,
+        m3.large,
+        m3.xlarge,
+        m3.2xlarge,
+        m4.large,
+        m4.xlarge,
+        m4.2xlarge,
+        m4.4xlarge,
+        m4.10xlarge,
+        c4.large,
+        c4.xlarge,
+        c4.2xlarge,
+        c4.4xlarge,
+        c4.8xlarge,
+        c3.large,
+        c3.xlarge,
+        c3.2xlarge,
+        c3.4xlarge,
+        c3.8xlarge,
+        r3.large,
+        r3.xlarge,
+        r3.2xlarge,
+        r3.4xlarge,
+        r3.8xlarge,
+        i2.xlarge,
+        i2.2xlarge,
+        i2.4xlarge,
+        i2.8xlarge,
+        g4dn.xlarge,
+        g4dn.2xlarge,
+      ]
+    ConstraintDescription: Please choose a valid instance type.
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the ECS EC2 instances
+    Type: AWS::EC2::KeyPair::KeyName
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: Select a VPC from your account
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Select the first public subnet
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Select the second public subnet
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Select the first private subnet
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Select the second private subnet
+
+Resources:
+  AWSRoleName:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: synthstudio-ecs-task-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSMarketplaceMeteringFullAccess
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonECS_FullAccess
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonVPCFullAccess
+        - arn:aws:iam::aws:policy/AmazonRoute53FullAccess
+        - arn:aws:iam::aws:policy/AmazonRDSFullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+      Tags:
+        - Key: Name
+          Value: SynthStudio-TaskRole
+
+  ecsInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ecsInstanceRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      Tags:
+        - Key: Name
+          Value: SynthStudio-ecsInstanceRole
+
+  ECSTaskRunLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SynthStudio-ec2StartFunc-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+        - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+
+      Policies:
+        - PolicyName: ECSRunTaskPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: "VisualEditor0"
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                  - ecs:RunTask
+                  - ecs:ListContainerInstances
+                  - ecs:DescribeContainerInstances
+                Resource: 
+                  - !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:cluster/*"
+                  - !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/*:*"
+                  - !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:container-instance/*/*"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/*"
+        - PolicyName: LambdaLoggingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - logs:CreateLogGroup
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/ec2StartFunc:*"
+
+  ECSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: SynthStudio-ECSClusterSecurityGroup
+      GroupDescription: A Security Group for the ECS Cluster
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'  
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref LBSecurityGroup
+        - IpProtocol: -1
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 24.239.0.0/16
+      Tags:
+      - Key: Application
+        Value: SynthStudio-ECSClusterSecurityGroup
+
+  LBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: SynthStudio-LBSecurityGroup
+      GroupDescription: A Security Group for the Load Balancer
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 24.239.0.0/16
+      Tags:
+        - Key: Application
+          Value: SynthStudio-LBSecurityGroup
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: SynthStudio-RDSSecurityGroup
+      GroupDescription: A Security Group for RDS
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: '-1'
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref ECSClusterSecurityGroup
+      Tags:
+        - Key: Application
+          Value: SynthStudio-RDSSecurityGroup
+
+  SynthStudioRDS:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      StorageType: gp2
+      AllocatedStorage: 20
+      MaxAllocatedStorage: 1000
+      MultiAZ: false
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      DBInstanceIdentifier: synthstudio-app-db
+      MasterUsername: postgres
+      MasterUserPassword: SynthStudio123
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: No
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for the SynthStudio RDS instance
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: SynthStudio-DBSubnetGroup
+
+  Cluster:
+    DependsOn: LoadBalancer
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: SynthStudio-Cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: SynthStudio-Cluster
+
+  SynthStudioCapacityProviderTrain:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref ECSAutoScalingGroupTrain
+        ManagedScaling:
+          InstanceWarmupPeriod: 10
+          MaximumScalingStepSize: 1
+          MinimumScalingStepSize: 1
+          Status: ENABLED
+        ManagedTerminationProtection: DISABLED
+      Name: SynthStudio-CapacityProvider-Train
+      Tags:
+        - Key: Name
+          Value: SynthStudio-CapacityProvider-Train
+
+  SynthStudioCapacityProviderAssociation:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+        - !Ref SynthStudioCapacityProviderTrain
+        - !Ref SynthStudioCapacityProviderInference
+      Cluster: !Ref Cluster
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: !Ref SynthStudioCapacityProviderTrain
+          Weight: 1
+          Base: 0
+        - CapacityProvider: !Ref SynthStudioCapacityProviderInference
+          Weight: 1
+          Base: 0
+
+  ECSAutoScalingGroupTrain:
+    DependsOn: ContainerInstancesTrain
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: SynthStudio-AutoScalingGroup-Train
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref ContainerInstancesTrain
+        Version: !GetAtt ContainerInstancesTrain.LatestVersionNumber
+      MinSize: '0'
+      MaxSize: '4'
+      DesiredCapacity: '0'
+    # CreationPolicy:
+    #   ResourceSignal:
+    #     Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+        WaitOnResourceSignals: false
+
+  ECSTrainCPUPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref ECSAutoScalingGroupTrain
+      PolicyType: StepScaling
+      AdjustmentType: ChangeInCapacity
+      MetricAggregationType: Average
+      StepAdjustments:
+        - MetricIntervalLowerBound: 2048
+          ScalingAdjustment: 0
+        - MetricIntervalLowerBound: 0
+          MetricIntervalUpperBound: 2048
+          ScalingAdjustment: -1
+        - MetricIntervalUpperBound: 0
+          ScalingAdjustment: -1
+
+  ContainerInstancesTrain:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: SynthStudio-ContainerInstancesTrain
+      LaunchTemplateData:
+        ImageId: ami-03305c1308da7dcec
+        SecurityGroupIds: [!GetAtt ECSClusterSecurityGroup.GroupId]
+        KeyName: !Ref KeyName
+        InstanceType: !Ref InstanceTypeTrain
+        IamInstanceProfile:
+          Name: !Ref EC2InstanceProfile
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            yum install -y aws-cfn-bootstrap
+            echo ECS_CLUSTER=${Cluster} >> /etc/ecs/ecs.config
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ContainerInstancesTrain --region ${AWS::Region}
+            
+  
+  SynthStudioCapacityProviderInference:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref ECSAutoScalingGroupInference
+        ManagedScaling:
+          InstanceWarmupPeriod: 10
+          MaximumScalingStepSize: 1
+          MinimumScalingStepSize: 1
+          Status: ENABLED
+        ManagedTerminationProtection: DISABLED
+      Name: SynthStudio-CapacityProvider-Inference
+      Tags:
+        - Key: Name
+          Value: SynthStudio-CapacityProvider-Inference
+
+  ECSAutoScalingGroupInference:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: SynthStudio-AutoScalingGroup-Inference
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref ContainerInstancesInference
+        Version: !GetAtt ContainerInstancesInference.LatestVersionNumber
+      MinSize: '0'
+      MaxSize: '4'
+      DesiredCapacity: '0'
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+        WaitOnResourceSignals: false
+
+  ECSCPUInferencePolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref ECSAutoScalingGroupInference
+      PolicyType: StepScaling
+      AdjustmentType: ChangeInCapacity
+      MetricAggregationType: Average
+      StepAdjustments:
+        - MetricIntervalLowerBound: 2048
+          ScalingAdjustment: 0
+        - MetricIntervalLowerBound: 0
+          MetricIntervalUpperBound: 2048
+          ScalingAdjustment: -1
+        - MetricIntervalUpperBound: 0
+          ScalingAdjustment: -1
+
+  ContainerInstancesInference:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: SynthStudio-ContainerInstancesInference
+      LaunchTemplateData:
+        ImageId: ami-03305c1308da7dcec
+        SecurityGroupIds: [!GetAtt ECSClusterSecurityGroup.GroupId]
+        KeyName: !Ref KeyName
+        InstanceType: !Ref InstanceTypeInference
+        IamInstanceProfile:
+          Name: !Ref EC2InstanceProfile
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            yum install -y aws-cfn-bootstrap
+            echo ECS_CLUSTER=${Cluster} >> /etc/ecs/ecs.config
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ContainerInstancesInference --region ${AWS::Region}
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles: [!Ref ecsInstanceRole]
+
+  # V2
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Name: synthstudio-cf-lb
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !GetAtt LBSecurityGroup.GroupId
+
+  HTTPSLoadBalancerListener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: "HTTPS"
+      SslPolicy: "ELBSecurityPolicy-2016-08"
+      Certificates:
+        - CertificateArn: !Ref SSLCertificateARN
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+  HTTPlistener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      DefaultActions:
+        - Type: "redirect"
+          RedirectConfig:
+            Protocol: "HTTPS"
+            Port: 443
+            Host: "#{host}"
+            Path: "/#{path}"
+            Query: "#{query}"
+            StatusCode: "HTTP_301"
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: "HTTP"
+
+  HTTPSLoadBalancerListenerBackend:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 8001
+      Protocol: "HTTPS"
+      SslPolicy: "ELBSecurityPolicy-2016-08"
+      Certificates:
+        - CertificateArn: !Ref SSLCertificateARN
+      DefaultActions:
+        - Type: "forward"
+          TargetGroupArn: !Ref TargetGroupBackend
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      Name: ss-target-group
+      VpcId: !Ref VPCId
+      Port: 80
+      Protocol: HTTP
+      HealthCheckPath: /
+
+  TargetGroupBackend:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      TargetType: ip
+      Name: ss-target-group-backend
+      VpcId: !Ref VPCId
+      Port: 8001
+      Protocol: HTTP
+      HealthCheckPath: /ping
+
+  TaskDefinitionBackend:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Join ["-", ["SynthStudio", "Cluster", "Backend"]]
+      Cpu: 1024
+      Memory: 2048
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !Ref AWSRoleName
+      TaskRoleArn: !Ref AWSRoleName
+      ContainerDefinitions:
+        - Name: synth_studio_backend
+          Image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/mphasis/synthstudio_container_product/synth_studio_backend:latest
+          PortMappings:
+            - ContainerPort: 8001
+          Environment:
+            - Name: ORG_NAME
+              Value: !Ref clientname
+            - Name: DB_HOST
+              Value: !GetAtt SynthStudioRDS.Endpoint.Address
+            - Name: DB_USER
+              Value: postgres
+            - Name: DB_PASSWORD
+              Value: SynthStudio123
+            - Name: BUCKET_NAME
+              Value: !Ref ArtifactsS3Bucket
+            - Name: REGION
+              Value: !Ref AWS::Region
+            - Name: TRAIN_QUEUE_URL
+              Value: !Ref SynthStudioTrainQueue
+            - Name: INFERENCE_QUEUE_URL
+              Value: !Ref SynthStudioInferenceQueue
+  
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+
+        - Name: synth_studio_db
+          Image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/mphasis/synthstudio_container_product/synth_studio_createdb:latest
+          Environment:
+            - Name: DB_USER
+              Value: postgres
+            - Name: DB_PASSWORD
+              Value: SynthStudio123
+            - Name: DB_HOST
+              Value: !GetAtt SynthStudioRDS.Endpoint.Address
+          Essential: false
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+
+  TaskDefinitionUI:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Join ["-", ["SynthStudio", "Cluster", "UI"]]
+      Cpu: 1024
+      Memory: 2048
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !Ref AWSRoleName
+      TaskRoleArn: !Ref AWSRoleName
+      ContainerDefinitions:
+        - Name: synth_studio_ui
+          Image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/mphasis/synthstudio_container_product/synth_studio_ui:latest
+          PortMappings:
+            - ContainerPort: 80
+          Environment:
+            - Name: REACT_APP_Backend_URL
+              Value:
+                !Join [
+                  "",
+                  ["https://", !Ref clientname, ".", !Ref DNSRecord, ":8001"],
+                ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+
+  TaskDefinitionTrain:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Join ["-", ["SynthStudio", "Cluster", "Train"]]
+      Cpu: 2048
+      Memory: 4096
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !Ref AWSRoleName
+      TaskRoleArn: !Ref AWSRoleName
+      ContainerDefinitions:
+        - Name: synth_studio_train
+          Image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/mphasis/synthstudio_container_product/synth_studio_train:latest
+          # PortMappings:
+          #   - ContainerPort: 8000
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+          ResourceRequirements:
+            - Type: GPU
+              Value: "1"
+          Environment:
+            - Name: ORG_NAME
+              Value: !Ref clientname
+            - Name: DB_HOST
+              Value: !GetAtt SynthStudioRDS.Endpoint.Address
+            - Name: DB_USER
+              Value: postgres
+            - Name: DB_PASSWORD
+              Value: SynthStudio123
+            - Name: BUCKET_NAME
+              Value: !Ref ArtifactsS3Bucket
+            - Name: REGION
+              Value: !Ref AWS::Region
+
+  TaskDefinitionInference:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Join ["-", ["SynthStudio", "Cluster", "Inference"]]
+      Cpu: 2048
+      Memory: 4096
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !Ref AWSRoleName
+      TaskRoleArn: !Ref AWSRoleName
+      ContainerDefinitions:
+        - Name: synth_studio_inference
+          Image: 709825985650.dkr.ecr.us-east-1.amazonaws.com/mphasis/synthstudio_container_product/synth_studio_inference:latest
+          PortMappings:
+            - ContainerPort: 8500
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: ecs
+          ResourceRequirements:
+            - Type: GPU
+              Value: "1"
+          Environment:
+            - Name: ORG_NAME
+              Value: !Ref clientname
+            - Name: DB_HOST
+              Value: !GetAtt SynthStudioRDS.Endpoint.Address
+            - Name: DB_USER
+              Value: postgres
+            - Name: DB_PASSWORD
+              Value: SynthStudio123
+            - Name: BUCKET_NAME
+              Value: !Ref ArtifactsS3Bucket
+            - Name: REGION
+              Value: !Ref AWS::Region
+
+  ServiceUI:
+    DependsOn: HTTPSLoadBalancerListener
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: synthstudio-cf-serive-UI
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinitionUI
+      PropagateTags: SERVICE
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !GetAtt ECSClusterSecurityGroup.GroupId
+      LoadBalancers:
+        - TargetGroupArn: !Ref TargetGroup
+          ContainerPort: 80
+          ContainerName: synth_studio_ui
+
+  ServiceBackend:
+    DependsOn: HTTPSLoadBalancerListenerBackend
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: synthstudio-cf-serive-backend
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinitionBackend
+      PropagateTags: SERVICE
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !GetAtt ECSClusterSecurityGroup.GroupId
+      LoadBalancers:
+        - TargetGroupArn: !Ref TargetGroupBackend
+          ContainerPort: 8001
+          ContainerName: synth_studio_backend
+
+  Route53RecordSetGroup:
+    Type: AWS::Route53::RecordSetGroup
+    DependsOn: LoadBalancer
+    Properties:
+      HostedZoneId: !Ref Route53HostedZoneID
+      RecordSets:
+        - Name: !Join [".", [!Ref clientname, !Ref DNSRecord]]
+          Type: A
+          AliasTarget:
+            HostedZoneId: !GetAtt LoadBalancer.CanonicalHostedZoneID
+            DNSName: !GetAtt 'LoadBalancer.DNSName'
+
+  CloudWatchASGTrainTrigger:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: CPUReserved-StepDown-Alarm-Train
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref ECSTrainCPUPolicy
+      MetricName: CpuReserved
+      Namespace: ECS/ContainerInsights
+      Statistic: Average
+      Dimensions:
+        - Name: ClusterName
+          Value: SynthStudio-Cluster
+        - Name: TaskDefinitionFamily
+          Value: SynthStudio-Cluster-Train
+      Period: 900
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 2048
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: missing
+
+  CloudWatchASGInferenceTrigger:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: CPUReserved-StepDown-Alarm-Inference
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref ECSCPUInferencePolicy
+      MetricName: CpuReserved
+      Namespace: ECS/ContainerInsights
+      Statistic: Average
+      Dimensions:
+        - Name: ClusterName
+          Value: SynthStudio-Cluster
+        - Name: TaskDefinitionFamily
+          Value: SynthStudio-Cluster-Train
+      Period: 900
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 2048
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: missing
+
+  TrainingLambdaFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        Description: Lambda function to orchestrate ECS EC2 instances and launch training tasks
+        FunctionName: SynthStudio-ec2Start-Train
+        Runtime: python3.9
+        Handler: lambda_function.lambda_handler
+        Role: !GetAtt ECSTaskRunLambdaRole.Arn
+        Code:
+          ZipFile: |
+            import boto3
+            import json
+            import time
+            from datetime import datetime
+
+            import os
+
+            ecs_client = boto3.client('ecs')
+            sqs_client = boto3.client('sqs')
+            asg_client = boto3.client('autoscaling')
+
+            CLUSTER_NAME = 'SynthStudio-Cluster'  # os.environ.get("CLUSTER_NAME")
+            ASG_NAME = 'SynthStudio-AutoScalingGroup-Train'  # f'{CLUSTER_NAME}-AutoScalingGroup-Train'
+
+            def set_desired_capacity(desired_capacity):
+                return asg_client.update_auto_scaling_group(
+                    AutoScalingGroupName=ASG_NAME,
+                    DesiredCapacity=desired_capacity
+                )
+
+            def check_set_capacity():
+                # ECS
+                ecs_response = ecs_client.list_container_instances(cluster=CLUSTER_NAME,)    
+                container_instances = ecs_response.get('containerInstanceArns', [])
+                print("container instances: ", container_instances)
+
+                # ASG
+                asg_response = asg_client.describe_auto_scaling_groups(
+                    AutoScalingGroupNames=[ASG_NAME]
+                )
+                desired_capacity = asg_response['AutoScalingGroups'][0]['DesiredCapacity']
+                max_capacity = asg_response['AutoScalingGroups'][0]['MaxSize']
+                asg_instances = asg_response['AutoScalingGroups'][0]['Instances']
+                
+                print(f"Desired capacity: {desired_capacity}, max_capacity: {max_capacity}, len(container_instances): {len(container_instances)}, len(asg_instances)): {len(asg_instances)}")  # asg_instances
+                
+                if any([instance['LifecycleState'] == 'Pending' for instance in asg_instances]):
+                    print("Scaling action already in progress, skipping this cycle.")
+                    return False  # Don't trigger another scale-up if there's already one happening.
+
+                if len(container_instances) > 0:
+                    container_info = ecs_client.describe_container_instances(
+                        cluster=CLUSTER_NAME,
+                        containerInstances=container_instances
+                    )
+                    
+                    for instance in container_info['containerInstances']:
+                        # if no tasks running or pending, and if instance is not in a draining state
+                        if instance['runningTasksCount'] == 0 and instance['pendingTasksCount'] == 0 and instance['status'] != "DRAINING":
+                            print(f"Instance {instance['ec2InstanceId']} idle")
+                            return True  # idle instance found
+                        else:
+                            print(f"Instance {instance['ec2InstanceId']} not idle: running={instance['runningTasksCount']}, pending={instance['pendingTasksCount']}")
+                            
+                print(f"Scaling conditions: {desired_capacity}<{max_capacity}; desired capacity {desired_capacity}==len(asg_instances) {len(asg_instances)}; desired_capacity {desired_capacity}== len(container_instances) {len(container_instances)}")
+                if desired_capacity < max_capacity and desired_capacity == len(asg_instances) and desired_capacity == len(container_instances):  
+                # if no container instances, no asg instances, and no idle instances, and desired capacity < max capacity
+                # max_capacity already checked for, idle_instances checked for right before this
+                # reaching here => container instances but none idle, or no container instances
+                
+                    print("desired capacity increased by 1")
+                    asg_response = set_desired_capacity(desired_capacity + 1)
+                    return False  # no instance idle, trying to scale out
+
+                return False  # no instances idle
+
+            def check_idle_capacity():
+                ecs_response = ecs_client.list_container_instances(cluster=CLUSTER_NAME,)    
+                container_instances = ecs_response.get('containerInstanceArns', [])
+                
+                if len(container_instances) > 0:
+                    container_info = ecs_client.describe_container_instances(
+                        cluster=CLUSTER_NAME,
+                        containerInstances=container_instances
+                    )
+                    
+                    for instance in container_info['containerInstances']:
+                        # if no tasks running or pending, and if instance is not in a draining state
+                        if instance['runningTasksCount'] == 0 and instance['pendingTasksCount'] == 0: # and instance['status'] != "DRAINING":
+                            print(f"Instance {instance['ec2InstanceId']} idle")
+                            return True
+                
+                return False  # no instances idle
+
+            def try_run_task(dataset_id, job_id):
+                instance_available = check_set_capacity()  # check_idle_capacity()
+                if not instance_available:
+                    return False, "No idle instances available"
+                
+                try:
+                    response = ecs_client.run_task(
+                            cluster=CLUSTER_NAME,
+                            # launchType='EC2',
+                            capacityProviderStrategy=[
+                                {
+                                    'capacityProvider': 'SynthStudio-CapacityProvider-Train', # f'{CLUSTER_NAME}
+                                    'weight': 1,
+                                    'base': 1
+                                },
+                            ],
+                            overrides={
+                                'containerOverrides': [
+                                    {
+                                        'name': "synth_studio_train",
+                                        'environment': [
+                                            {'name': "DATASET_ID", 'value': str(dataset_id)},  # dataset_id
+                                            {'name': "JOB_ID", 'value': str(job_id)},
+                                        ],
+                                        'resourceRequirements': [
+                                            {
+                                                'value': '1', 
+                                                'type': 'GPU'
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            placementConstraints=[
+                                {
+                                    'type': 'distinctInstance'
+                                }
+                            ],
+                            taskDefinition='SynthStudio-Cluster-Train'
+                        )
+                    
+                    print("Response from run_task", response)
+                    if response['failures']:
+                        print(f"Task failed, {response['failures']}")
+                        return False, f"Task {dataset_id} failed: {response['failures']}"
+                        
+                    else:
+                        task_arn = response['tasks'][0]['taskArn']
+                        return True, f"{task_arn} successfully started"
+                        
+                except Exception as e:
+                    return False, f"Error running task {dataset_id}: {str(e)}"
+
+
+            def lambda_handler(event, context):
+                print("Begin lambda_handler", event)
+                for record in event['Records']:
+                    
+                    req_dict = json.loads(record['body'])
+                    dataset_id = req_dict['dataset_id']
+                    job_id = req_dict['job_id']
+                    
+                    print(dataset_id, " - dataset_id")
+                    print(job_id, " - job_id")
+                    
+                    max_retries = 5
+                    retry_count = 0
+                    
+                    try:
+                        while retry_count < max_retries:
+                            status, result = try_run_task(dataset_id, job_id)
+                            
+                            if status:  # Success
+                                print(result)
+                                return status, result
+                                
+                            # elif result == 'No instances available':
+                                
+                            else:  # Failure, try again
+                                print(status, " due to ", result)
+                                
+                            retry_count += 1
+                            
+                            # exponential backoff
+                            if retry_count < max_retries:
+                                time.sleep(3 ** retry_count)
+                                print(f"Sleeping for {3 ** retry_count} seconds")
+                        
+                        # message did not return success with max retries
+                        print("Final error: ", result)
+                        raise Exception("Failed to run task due to: ", result)  # No available instances."
+                        
+                    except Exception as e:
+                        raise Exception(f"Error running task {dataset_id}: {str(e)}")
+
+
+  InferenceLambdaFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        Description: Lambda function to orchestrate ECS EC2 instances and launch inference tasks
+        FunctionName: SynthStudio-ec2Start-Inference
+        Runtime: python3.9
+        Handler: lambda_function.lambda_handler
+        Role: !GetAtt ECSTaskRunLambdaRole.Arn
+        Code:
+          ZipFile: |
+            import boto3
+            import json
+            import time
+            from datetime import datetime
+
+            import os
+
+            ecs_client = boto3.client('ecs')
+            sqs_client = boto3.client('sqs')
+            asg_client = boto3.client('autoscaling')
+
+            CLUSTER_NAME = 'SynthStudio-Cluster1'  # os.environ.get("CLUSTER_NAME")
+            ASG_NAME = 'SynthStudio-AutoScalingGroup-Inference'  # f'{CLUSTER_NAME}-AutoScalingGroup-Train'
+
+            def set_desired_capacity(desired_capacity):
+                return asg_client.update_auto_scaling_group(
+                    AutoScalingGroupName=ASG_NAME,
+                    DesiredCapacity=desired_capacity
+                )
+
+            def check_set_capacity():
+                # ECS
+                ecs_response = ecs_client.list_container_instances(cluster=CLUSTER_NAME,)    
+                container_instances = ecs_response.get('containerInstanceArns', [])
+                print("container instances: ", container_instances)
+
+                # ASG
+                asg_response = asg_client.describe_auto_scaling_groups(
+                    AutoScalingGroupNames=[ASG_NAME]
+                )
+                desired_capacity = asg_response['AutoScalingGroups'][0]['DesiredCapacity']
+                max_capacity = asg_response['AutoScalingGroups'][0]['MaxSize']
+                asg_instances = asg_response['AutoScalingGroups'][0]['Instances']
+                
+                print(f"Desired capacity: {desired_capacity}, max_capacity: {max_capacity}, len(container_instances): {len(container_instances)}, len(asg_instances)): {len(asg_instances)}")  # asg_instances
+                
+                if any([instance['LifecycleState'] == 'Pending' for instance in asg_instances]):
+                    print("Scaling action already in progress, skipping this cycle.")
+                    return False  # Don't trigger another scale-up if there's already one happening.
+
+                if len(container_instances) > 0:
+                    container_info = ecs_client.describe_container_instances(
+                        cluster=CLUSTER_NAME,
+                        containerInstances=container_instances
+                    )
+                    
+                    for instance in container_info['containerInstances']:
+                        # if no tasks running or pending, and if instance is not in a draining state
+                        if instance['runningTasksCount'] == 0 and instance['pendingTasksCount'] == 0 and instance['status'] != "DRAINING":
+                            print(f"Instance {instance['ec2InstanceId']} idle")
+                            return True  # idle instance found
+                        #!
+                        else:
+                            print(f"Instance {instance['ec2InstanceId']} not idle: running={instance['runningTasksCount']}, pending={instance['pendingTasksCount']}")
+                            
+                print(f"Scaling conditions: {desired_capacity}<{max_capacity}; desired capacity {desired_capacity}==len(asg_instances) {len(asg_instances)}; desired_capacity {desired_capacity}== len(container_instances) {len(container_instances)}")
+                if desired_capacity < max_capacity and desired_capacity == len(asg_instances) and desired_capacity == len(container_instances):                  
+                    print("desired capacity increased by 1")
+                    asg_response = set_desired_capacity(desired_capacity + 1)
+                    return False  # no instance idle, trying to scale out
+
+                return False  # no instances idle
+
+
+            def check_idle_capacity():
+                ecs_response = ecs_client.list_container_instances(cluster=CLUSTER_NAME,)    
+                container_instances = ecs_response.get('containerInstanceArns', [])
+                
+                if len(container_instances) > 0:
+                    container_info = ecs_client.describe_container_instances(
+                        cluster=CLUSTER_NAME,
+                        containerInstances=container_instances
+                    )
+                    
+                    for instance in container_info['containerInstances']:
+                        # if no tasks running or pending, and if instance is not in a draining state
+                        if instance['runningTasksCount'] == 0 and instance['pendingTasksCount'] == 0: # and instance['status'] != "DRAINING":
+                            print(f"Instance {instance['ec2InstanceId']} idle")
+                            return True
+                
+                return False  # no instances idle
+
+
+            def try_run_task(inference_id, job_id, dataset_id, number_of_datapoints):
+                instance_available = check_set_capacity()  # check_idle_capacity()
+                if not instance_available:
+                    return False, "No idle instances available"
+                
+                try:
+                    response = ecs_client.run_task(
+                            cluster=CLUSTER_NAME,
+                            # launchType='EC2',
+                            capacityProviderStrategy=[
+                                {
+                                    'capacityProvider': 'SynthStudio-CapacityProvider-Inference', #TODO f'{CLUSTER_NAME}
+                                    'weight': 1,
+                                    'base': 1  #! 1?
+                                },
+                            ],
+                            overrides={
+                                'containerOverrides': [
+                                    {
+                                        #DONE: add container name: will it be static or changeable
+                                        'name': "synth_studio_inference",
+                                        'environment': [
+                                            {'name': "JOB_ID", 'value': job_id},
+                                            {'name': "DATASET_ID", 'value': dataset_id},  # dataset_id
+                                            {'name': "INFERENCE_ID", 'value': inference_id},
+                                            {'name': "NUMBER_OF_DATAPOINTS", 'value': number_of_datapoints},
+                                            # {'name': "USER_ID", 'value': user_id}
+                                        ],
+                                        # 'cpu': 
+                                        # 'memory': 
+                                        'resourceRequirements': [ #!
+                                            {
+                                                'value': '1', 
+                                                'type': 'GPU'
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            
+                            taskDefinition='SynthStudio-Cluster-Inference'
+                        )
+                    
+                    print("Response from run_task", response)
+                    if response['failures']:
+                        print(f"Task failed, {response['failures']}")
+                        return False, f"Task {dataset_id} failed: {response['failures']}"
+                        
+                    else:
+                        task_arn = response['tasks'][0]['taskArn']
+                        return True, f"{task_arn} successfully started"
+                        
+                except Exception as e:
+                    return False, f"Error running task {dataset_id}: {str(e)}"
+
+            def lambda_handler(event, context):
+                print("Begin lambda_handler", event)
+                for record in event['Records']:
+                    
+                    # {"dataset_id": dataset_id, "inference_id": inference_id, "number_of_datapoints": numsamples}
+                    req_dict = json.loads(record['body'])
+                    dataset_id = req_dict['dataset_id']
+                    inference_id = req_dict['inference_id']
+                    job_id = req_dict['job_id']
+                    number_of_datapoints = req_dict['number_of_datapoints']
+                    
+                    print(dataset_id, " - dataset_id")
+                    print(inference_id, " - inference_id")
+                    print(job_id, " - job_id")
+                    print(number_of_datapoints, " - number_of_datapoints")
+                    
+                    max_retries = 5
+                    retry_count = 0
+                    
+                    try:
+                        while retry_count < max_retries:
+                            status, result = try_run_task(inference_id, job_id, dataset_id, number_of_datapoints)
+                            
+                            if status:  # Success
+                                print(result)
+                                return status, result
+                                
+                            # elif result == 'No instances available':
+                                
+                            else:  # Failure, try again
+                                print(status, " due to ", result)
+                                
+                            retry_count += 1
+                            
+                            # exponential backoff
+                            if retry_count < max_retries:
+                                time.sleep(3 ** retry_count)
+                                print(f"Sleeping for {3 ** retry_count} seconds")
+                        
+                        # message did not return success with max retries
+                        print("Final error: ", result)
+                        raise Exception("Failed to run task due to: ", result)  # No available instances."
+                        
+                    except Exception as e:
+                        raise Exception(f"Error running task {dataset_id}: {str(e)}")
+
+  SynthStudioTrainQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        DelaySeconds: 0
+        QueueName: SynthStudioTrainQueue.fifo
+        ReceiveMessageWaitTimeSeconds: 0
+        VisibilityTimeout: 180
+
+  SynthStudioInferenceQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      DelaySeconds: 0
+      QueueName: SynthStudioInferenceQueue.fifo
+      ReceiveMessageWaitTimeSeconds: 0
+      VisibilityTimeout: 180
